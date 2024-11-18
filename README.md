@@ -1,4 +1,4 @@
 streamlit==1.31.0
 pandas==2.2.0
-PyPDF2==3.0.1
+pdfplumber==0.10.3
 python-dateutil==2.8.2
