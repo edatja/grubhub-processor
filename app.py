@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
+import PyPDF2
+import io
 
 st.set_page_config(page_title="Food Delivery Statement Processor", page_icon="🧾", layout="wide")
 
@@ -17,6 +19,22 @@ st.markdown("""
         }
     </style>
 """, unsafe_allow_html=True)
+
+def extract_text_from_pdf(pdf_file):
+    """Extract text from uploaded PDF file"""
+    try:
+        # Create a PDF reader object
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        # Extract text from all pages
+        text = ""
+        for page in pdf_reader.pages:
+            text += page.extract_text() + "\n"
+        
+        return text
+    except Exception as e:
+        st.error(f"Error reading PDF: {str(e)}")
+        return None
 
 class DeliveryServiceProcessor:
     def __init__(self):
@@ -134,25 +152,41 @@ def main():
     ### Convert GrubHub statements into QuickBooks journal entries
     
     **Instructions:**
-    1. Copy your entire GrubHub statement
-    2. Paste it below
-    3. Click 'Process Statement'
-    4. Review the entries
-    5. Download the CSV file
+    1. Upload your GrubHub statement PDF or paste the statement text
+    2. Click 'Process Statement'
+    3. Review the entries
+    4. Download the CSV file
     """)
 
     # Create tabs
     tab1, tab2 = st.tabs(["Process Statement", "Account Settings"])
 
     with tab1:
-        # Text input for statement
-        statement_text = st.text_area(
-            "Paste your GrubHub statement here:",
-            height=300,
-            help="Copy and paste your entire GrubHub statement, including all deposit details"
-        )
+        # Create two columns for input options
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("### Option 1: Upload PDF")
+            pdf_file = st.file_uploader("Upload GrubHub statement PDF", type=['pdf'])
+            if pdf_file:
+                st.success("PDF uploaded successfully!")
+        
+        with col2:
+            st.markdown("### Option 2: Paste Text")
+            statement_text = st.text_area(
+                "Or paste your GrubHub statement here:",
+                height=200,
+                help="Copy and paste your entire GrubHub statement, including all deposit details"
+            )
 
         if st.button('Process Statement', type='primary'):
+            # Get statement text from either PDF or text input
+            if pdf_file:
+                statement_text = extract_text_from_pdf(pdf_file)
+                if not statement_text:
+                    st.error("Could not extract text from PDF. Please try pasting the statement text instead.")
+                    return
+            
             if statement_text:
                 processor = DeliveryServiceProcessor()
                 
@@ -223,7 +257,7 @@ def main():
                 else:
                     st.warning("No deposits found in the statement. Please check the statement format.")
             else:
-                st.warning("Please paste a GrubHub statement first.")
+                st.warning("Please either upload a PDF or paste the statement text.")
 
     with tab2:
         st.markdown("### Current Account Settings")
