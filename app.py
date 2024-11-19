@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import re
-import PyPDF2
+import pdfplumber
 import io
 
 st.set_page_config(page_title="Food Delivery Statement Processor", page_icon="🧾", layout="wide")
@@ -23,14 +23,12 @@ st.markdown("""
 def extract_text_from_pdf(pdf_file):
     """Extract text from uploaded PDF file"""
     try:
-        # Create a PDF reader object
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        
-        # Extract text from all pages
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        
+        # Read PDF file
+        with pdfplumber.open(pdf_file) as pdf:
+            text = ""
+            # Extract text from all pages
+            for page in pdf.pages:
+                text += page.extract_text() + "\n"
         return text
     except Exception as e:
         st.error(f"Error reading PDF: {str(e)}")
