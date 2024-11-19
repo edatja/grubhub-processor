@@ -28,67 +28,84 @@ class DeliveryServiceProcessor:
         }
     
     def parse_grubhub_statement(self, text):
-        """Parse GrubHub statement into individual deposits"""
-        deposits = []
-        try:
-            # Find all deposit sections
-            deposit_sections = re.finditer(
-                r'Deposit (\d{1,2}/\d{1,2}/\d{4})\s+.*?Orders (\d{1,2}/\d{1,2}) to (\d{1,2}/\d{1,2})', 
-                text, 
-                re.DOTALL
-            )
+    """Parse GrubHub statement into individual deposits"""
+    deposits = []
+    try:
+        # Find all deposit sections
+        deposit_sections = re.finditer(
+            r'Deposit (\d{1,2}/\d{1,2}/\d{4})\s+.*?Orders (\d{1,2}/\d{1,2}) to (\d{1,2}/\d{1,2})', 
+            text, 
+            re.DOTALL
+        )
 
-            for section in deposit_sections:
-                # Basic deposit info
-                date = datetime.strptime(section.group(1), '%m/%d/%Y')
-                order_period = f"{section.group(2)} to {section.group(3)}"
-                
-                # Get section text
-                section_end = text.find('Deposit', section.end())
-                if section_end == -1:
-                    section_end = len(text)
-                section_text = text[section.start():section_end]
+        for section in deposit_sections:
+            # Basic deposit info
+            date = datetime.strptime(section.group(1), '%m/%d/%Y')
+            order_period = f"{section.group(2)} to {section.group(3)}"
+            
+            # Get section text
+            section_end = text.find('Deposit', section.end())
+            if section_end == -1:
+                section_end = len(text)
+            section_text = text[section.start():section_end]
 
-                # Find distribution ID
-                dist_id_match = re.search(r'(\d{8}JV-UBOK)', section_text)
-                distribution_id = dist_id_match.group(1) if dist_id_match else ''
+            # Find distribution ID
+            dist_id_match = re.search(r'(\d{8}JV-UBOK)', section_text)
+            distribution_id = dist_id_match.group(1) if dist_id_match else ''
 
-                # Extract totals
-                net_amount_match = re.search(r'\$(\d+\.\d+)\s*$', section_text)
-                net_deposit = float(net_amount_match.group(1)) if net_amount_match else 0
+            # Initialize variables
+            subtotal = 0
+            tax = 0
+            fees = 0
+            net_deposit = 0
 
-                # Parse order details
-                orders_text = section_text
-                subtotal = 0
-                tax = 0
-                fees = 0
+            # Parse the Total collected line
+            total_collected_match = re.search(r'Total collected\s+\$(\d+\.\d+)', section_text)
+            if total_collected_match:
+                subtotal = float(total_collected_match.group(1))
 
-                # Find all money amounts
-                amounts = re.finditer(r'\$(\d+\.\d+)', orders_text)
-                for amount in amounts:
-                    value = float(amount.group(1))
-                    if '(' in orders_text[amount.start()-1:amount.start()]:
-                        fees += value
-                    elif 'tax' in orders_text[max(0, amount.start()-20):amount.start()].lower():
-                        tax += value
-                    else:
-                        subtotal = max(subtotal, value)
+            # Find tax amounts - look for specific tax references
+            tax_matches = re.finditer(r'Sales tax\s+\$(\d+\.\d+)|tax\s+\$(\d+\.\d+)', section_text, re.IGNORECASE)
+            for tax_match in tax_matches:
+                tax_amount = tax_match.group(1) or tax_match.group(2)
+                tax += float(tax_amount)
 
-                deposits.append({
-                    'date': date,
-                    'distribution_id': distribution_id,
-                    'order_period': order_period,
-                    'subtotal': subtotal,
-                    'tax': tax,
-                    'fees': fees,
-                    'net_deposit': net_deposit
-                })
+            # Find fees - look for all amounts in parentheses
+            fee_matches = re.finditer(r'\((\d+\.\d+)\)', section_text)
+            for fee_match in fee_matches:
+                fees += float(fee_match.group(1))
 
-        except Exception as e:
-            st.error(f"Error parsing statement: {str(e)}")
-            return []
+            # Extract net deposit amount (the final amount in the section)
+            net_matches = re.finditer(r'\$(\d+\.\d+)', section_text)
+            net_amounts = [float(match.group(1)) for match in net_matches]
+            if net_amounts:
+                net_deposit = net_amounts[-1]  # Take the last dollar amount in the section
 
-        return deposits
+            # Add deposit details
+            deposit = {
+                'date': date,
+                'distribution_id': distribution_id,
+                'order_period': order_period,
+                'subtotal': subtotal,
+                'tax': tax,
+                'fees': fees,
+                'net_deposit': net_deposit
+            }
+
+            # Debug information
+            st.write(f"Debug - Processing deposit for {date}:")
+            st.write(f"Subtotal: ${subtotal:.2f}")
+            st.write(f"Tax: ${tax:.2f}")
+            st.write(f"Fees: ${fees:.2f}")
+            st.write(f"Net Deposit: ${net_deposit:.2f}")
+
+            deposits.append(deposit)
+
+    except Exception as e:
+        st.error(f"Error parsing statement: {str(e)}")
+        return []
+
+    return deposits
 
     def create_journal_entries(self, deposits):
         """Convert deposits into QuickBooks journal entry format"""
