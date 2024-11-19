@@ -5,19 +5,6 @@ import re
 
 st.set_page_config(page_title="Food Delivery Statement Processor", page_icon="🧾", layout="wide")
 
-# Add custom CSS
-st.markdown("""
-    <style>
-        .stApp {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        .main {
-            padding: 2rem;
-        }
-    </style>
-""", unsafe_allow_html=True)
-
 class DeliveryServiceProcessor:
     def __init__(self):
         self.accounts = {
@@ -26,133 +13,133 @@ class DeliveryServiceProcessor:
             'tax': 'Sales Tax Payable',      # Sales Tax Payable
             'bank': 'Checking - 5734 - 1'    # Bank Account
         }
-    
+
+    def extract_amount(self, text, pattern):
+        """Helper function to extract dollar amounts"""
+        match = re.search(pattern, text)
+        if match:
+            # Remove $ and parentheses, convert to float
+            amount = match.group(1).replace('$', '').replace('(', '').replace(')', '')
+            return float(amount)
+        return 0.0
+
     def parse_grubhub_statement(self, text):
-    """Parse GrubHub statement into individual deposits"""
-    deposits = []
-    try:
-        # Find all deposit sections
-        deposit_sections = re.finditer(
-            r'Deposit (\d{1,2}/\d{1,2}/\d{4})\s+.*?Orders (\d{1,2}/\d{1,2}) to (\d{1,2}/\d{1,2})', 
-            text, 
-            re.DOTALL
-        )
+        deposits = []
+        
+        # Find deposit sections
+        sections = text.split('Distribution ID')
+        for section in sections[1:]:  # Skip header section
+            try:
+                # Extract deposit date
+                date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', section)
+                if not date_match:
+                    continue
+                date = datetime.strptime(date_match.group(1), '%m/%d/%Y')
 
-        for section in deposit_sections:
-            # Basic deposit info
-            date = datetime.strptime(section.group(1), '%m/%d/%Y')
-            order_period = f"{section.group(2)} to {section.group(3)}"
-            
-            # Get section text
-            section_end = text.find('Deposit', section.end())
-            if section_end == -1:
-                section_end = len(text)
-            section_text = text[section.start():section_end]
+                # Extract distribution ID
+                dist_id_match = re.search(r'(\d{8}JV-UBOK)', section)
+                distribution_id = dist_id_match.group(1) if dist_id_match else ''
 
-            # Find distribution ID
-            dist_id_match = re.search(r'(\d{8}JV-UBOK)', section_text)
-            distribution_id = dist_id_match.group(1) if dist_id_match else ''
+                # Extract order period
+                period_match = re.search(r'Orders (\d{1,2}/\d{1,2}) to (\d{1,2}/\d{1,2})', section)
+                order_period = f"{period_match.group(1)} to {period_match.group(2)}" if period_match else ""
 
-            # Initialize variables
-            subtotal = 0
-            tax = 0
-            fees = 0
-            net_deposit = 0
+                # Find the Total collected line
+                total_match = re.search(r'Total collected\s+\$(\d+\.\d+)', section)
+                subtotal = float(total_match.group(1)) if total_match else 0
 
-            # Parse the Total collected line
-            total_collected_match = re.search(r'Total collected\s+\$(\d+\.\d+)', section_text)
-            if total_collected_match:
-                subtotal = float(total_collected_match.group(1))
+                # Extract fees (amounts in parentheses)
+                fees = 0
+                fee_matches = re.finditer(r'\((\d+\.\d+)\)', section)
+                for match in fee_matches:
+                    fees += float(match.group(1))
 
-            # Find tax amounts - look for specific tax references
-            tax_matches = re.finditer(r'Sales tax\s+\$(\d+\.\d+)|tax\s+\$(\d+\.\d+)', section_text, re.IGNORECASE)
-            for tax_match in tax_matches:
-                tax_amount = tax_match.group(1) or tax_match.group(2)
-                tax += float(tax_amount)
+                # Extract tax
+                tax_matches = re.finditer(r'tax\s+\$(\d+\.\d+)', section, re.IGNORECASE)
+                tax = sum(float(match.group(1)) for match in tax_matches)
 
-            # Find fees - look for all amounts in parentheses
-            fee_matches = re.finditer(r'\((\d+\.\d+)\)', section_text)
-            for fee_match in fee_matches:
-                fees += float(fee_match.group(1))
+                # Extract net deposit (last amount in section)
+                amount_matches = list(re.finditer(r'\$(\d+\.\d+)(?!\s*\()', section))
+                if amount_matches:
+                    net_deposit = float(amount_matches[-1].group(1))
+                else:
+                    net_deposit = subtotal - fees - tax
 
-            # Extract net deposit amount (the final amount in the section)
-            net_matches = re.finditer(r'\$(\d+\.\d+)', section_text)
-            net_amounts = [float(match.group(1)) for match in net_matches]
-            if net_amounts:
-                net_deposit = net_amounts[-1]  # Take the last dollar amount in the section
+                # Debug information
+                st.write(f"""
+                Debug information for deposit {date}:
+                - Distribution ID: {distribution_id}
+                - Period: {order_period}
+                - Subtotal: ${subtotal:.2f}
+                - Fees: ${fees:.2f}
+                - Tax: ${tax:.2f}
+                - Net Deposit: ${net_deposit:.2f}
+                """)
 
-            # Add deposit details
-            deposit = {
-                'date': date,
-                'distribution_id': distribution_id,
-                'order_period': order_period,
-                'subtotal': subtotal,
-                'tax': tax,
-                'fees': fees,
-                'net_deposit': net_deposit
-            }
+                deposits.append({
+                    'date': date,
+                    'distribution_id': distribution_id,
+                    'order_period': order_period,
+                    'subtotal': subtotal,
+                    'tax': tax,
+                    'fees': fees,
+                    'net_deposit': net_deposit
+                })
 
-            # Debug information
-            st.write(f"Debug - Processing deposit for {date}:")
-            st.write(f"Subtotal: ${subtotal:.2f}")
-            st.write(f"Tax: ${tax:.2f}")
-            st.write(f"Fees: ${fees:.2f}")
-            st.write(f"Net Deposit: ${net_deposit:.2f}")
+            except Exception as e:
+                st.error(f"Error processing section: {str(e)}")
+                continue
 
-            deposits.append(deposit)
-
-    except Exception as e:
-        st.error(f"Error parsing statement: {str(e)}")
-        return []
-
-    return deposits
+        return deposits
 
     def create_journal_entries(self, deposits):
-    """Convert deposits into QuickBooks journal entry format"""
-    journal_entries = []
-    
-    for deposit in deposits:
-        entry = {
-            'date': deposit['date'].strftime('%m/%d/%Y'),
-            'memo': f'GrubHub Deposit {deposit["distribution_id"]} - Orders {deposit["order_period"]}',
-            'lines': [
-                {
-                    'account': self.accounts['bank'],
-                    'debit': deposit['net_deposit'],
-                    'credit': 0,
-                    'description': 'Net GrubHub Deposit'
-                },
-                {
-                    'account': self.accounts['fees'],
-                    'debit': deposit['fees'],
-                    'credit': 0,
-                    'description': 'GrubHub Fees'
-                },
-                {
-                    'account': self.accounts['sales'],
-                    'debit': 0,
-                    'credit': deposit['subtotal'],
-                    'description': 'Food Sales'
-                },
-                {
-                    'account': self.accounts['tax'],
-                    'debit': 0,
-                    'credit': deposit['tax'],
-                    'description': 'Sales Tax Collected'
-                }
-            ]
-        }
+        journal_entries = []
         
-        # Verify entry balances
-        total_debits = sum(line['debit'] for line in entry['lines'])
-        total_credits = sum(line['credit'] for line in entry['lines'])
-        st.write(f"Debug - Journal Entry for {entry['date']}:")
-        st.write(f"Total Debits: ${total_debits:.2f}")
-        st.write(f"Total Credits: ${total_credits:.2f}")
+        for deposit in deposits:
+            # Create the journal entry
+            entry = {
+                'date': deposit['date'].strftime('%m/%d/%Y'),
+                'memo': f'GrubHub Deposit {deposit["distribution_id"]} - Orders {deposit["order_period"]}',
+                'lines': [
+                    {
+                        'account': self.accounts['bank'],
+                        'debit': round(deposit['net_deposit'], 2),
+                        'credit': 0,
+                        'description': 'Net GrubHub Deposit'
+                    },
+                    {
+                        'account': self.accounts['fees'],
+                        'debit': round(deposit['fees'], 2),
+                        'credit': 0,
+                        'description': 'GrubHub Fees'
+                    },
+                    {
+                        'account': self.accounts['sales'],
+                        'debit': 0,
+                        'credit': round(deposit['subtotal'], 2),
+                        'description': 'Food Sales'
+                    },
+                    {
+                        'account': self.accounts['tax'],
+                        'debit': 0,
+                        'credit': round(deposit['tax'], 2),
+                        'description': 'Sales Tax Collected'
+                    }
+                ]
+            }
+
+            # Debug information for journal entry
+            st.write(f"""
+            Debug - Journal Entry for {entry['date']}:
+            - Bank Debit: ${entry['lines'][0]['debit']:.2f}
+            - Fees Debit: ${entry['lines'][1]['debit']:.2f}
+            - Sales Credit: ${entry['lines'][2]['credit']:.2f}
+            - Tax Credit: ${entry['lines'][3]['credit']:.2f}
+            """)
+
+            journal_entries.append(entry)
         
-        journal_entries.append(entry)
-    
-    return journal_entries
+        return journal_entries
 
 def main():
     st.title('🧾 Food Delivery Statement Processor')
