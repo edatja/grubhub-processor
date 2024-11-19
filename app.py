@@ -108,43 +108,51 @@ class DeliveryServiceProcessor:
     return deposits
 
     def create_journal_entries(self, deposits):
-        """Convert deposits into QuickBooks journal entry format"""
-        journal_entries = []
+    """Convert deposits into QuickBooks journal entry format"""
+    journal_entries = []
+    
+    for deposit in deposits:
+        entry = {
+            'date': deposit['date'].strftime('%m/%d/%Y'),
+            'memo': f'GrubHub Deposit {deposit["distribution_id"]} - Orders {deposit["order_period"]}',
+            'lines': [
+                {
+                    'account': self.accounts['bank'],
+                    'debit': deposit['net_deposit'],
+                    'credit': 0,
+                    'description': 'Net GrubHub Deposit'
+                },
+                {
+                    'account': self.accounts['fees'],
+                    'debit': deposit['fees'],
+                    'credit': 0,
+                    'description': 'GrubHub Fees'
+                },
+                {
+                    'account': self.accounts['sales'],
+                    'debit': 0,
+                    'credit': deposit['subtotal'],
+                    'description': 'Food Sales'
+                },
+                {
+                    'account': self.accounts['tax'],
+                    'debit': 0,
+                    'credit': deposit['tax'],
+                    'description': 'Sales Tax Collected'
+                }
+            ]
+        }
         
-        for deposit in deposits:
-            entry = {
-                'date': deposit['date'].strftime('%m/%d/%Y'),
-                'memo': f'GrubHub Deposit {deposit["distribution_id"]} - Orders {deposit["order_period"]}',
-                'lines': [
-                    {
-                        'account': self.accounts['bank'],
-                        'debit': round(deposit['net_deposit'], 2),
-                        'credit': 0,
-                        'description': 'Net GrubHub Deposit'
-                    },
-                    {
-                        'account': self.accounts['fees'],
-                        'debit': round(deposit['fees'], 2),
-                        'credit': 0,
-                        'description': 'GrubHub Fees'
-                    },
-                    {
-                        'account': self.accounts['sales'],
-                        'debit': 0,
-                        'credit': round(deposit['subtotal'], 2),
-                        'description': 'Food Sales'
-                    },
-                    {
-                        'account': self.accounts['tax'],
-                        'debit': 0,
-                        'credit': round(deposit['tax'], 2),
-                        'description': 'Sales Tax Collected'
-                    }
-                ]
-            }
-            journal_entries.append(entry)
+        # Verify entry balances
+        total_debits = sum(line['debit'] for line in entry['lines'])
+        total_credits = sum(line['credit'] for line in entry['lines'])
+        st.write(f"Debug - Journal Entry for {entry['date']}:")
+        st.write(f"Total Debits: ${total_debits:.2f}")
+        st.write(f"Total Credits: ${total_credits:.2f}")
         
-        return journal_entries
+        journal_entries.append(entry)
+    
+    return journal_entries
 
 def main():
     st.title('🧾 Food Delivery Statement Processor')
