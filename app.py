@@ -23,6 +23,41 @@ class DeliveryServiceProcessor:
             return float(amount)
         return 0.0
 
+    def extract_fees(self, section):
+        """Extract all types of GrubHub fees"""
+        fees = 0.0
+        
+        # Define fee patterns
+        fee_patterns = [
+            r'Marketing\s+\$\((\d+\.\d+)\)',
+            r'Delivery by Grubhub\s+\$\((\d+\.\d+)\)',
+            r'Processing\s+\$\((\d+\.\d+)\)',
+            r'Commission\s+\$\((\d+\.\d+)\)',  # Added in case they use this term
+            r'Service Fee\s+\$\((\d+\.\d+)\)'  # Added in case they use this term
+        ]
+        
+        for pattern in fee_patterns:
+            matches = re.finditer(pattern, section, re.IGNORECASE)
+            for match in matches:
+                fees += float(match.group(1))
+        
+        return fees
+
+    def extract_tax(self, section):
+        """Extract different types of tax amounts"""
+        collected_tax = 0.0
+        withheld_tax = 0.0
+        
+        # Pattern for collected sales tax
+        collected_matches = re.finditer(r'Sales Tax\s+\$(\d+\.\d+)(?!\s*\()', section, re.IGNORECASE)
+        collected_tax = sum(float(match.group(1)) for match in collected_matches)
+        
+        # Pattern for withheld sales tax
+        withheld_matches = re.finditer(r'Withheld Sales Tax\s+\$\((\d+\.\d+)\)', section, re.IGNORECASE)
+        withheld_tax = sum(float(match.group(1)) for match in withheld_matches)
+        
+        return collected_tax, withheld_tax
+
     def parse_grubhub_statement(self, text):
         deposits = []
         
@@ -48,22 +83,19 @@ class DeliveryServiceProcessor:
                 total_match = re.search(r'Total collected\s+\$(\d+\.\d+)', section)
                 subtotal = float(total_match.group(1)) if total_match else 0
 
-                # Extract fees (amounts in parentheses)
-                fees = 0
-                fee_matches = re.finditer(r'\((\d+\.\d+)\)', section)
-                for match in fee_matches:
-                    fees += float(match.group(1))
+                # Extract fees using the new method
+                fees = self.extract_fees(section)
 
-                # Extract tax
-                tax_matches = re.finditer(r'tax\s+\$(\d+\.\d+)', section, re.IGNORECASE)
-                tax = sum(float(match.group(1)) for match in tax_matches)
+                # Extract tax using the new method
+                collected_tax, withheld_tax = self.extract_tax(section)
+                total_tax = collected_tax  # We'll use collected tax for journal entries
 
                 # Extract net deposit (last amount in section)
                 amount_matches = list(re.finditer(r'\$(\d+\.\d+)(?!\s*\()', section))
                 if amount_matches:
                     net_deposit = float(amount_matches[-1].group(1))
                 else:
-                    net_deposit = subtotal - fees - tax
+                    net_deposit = subtotal - fees - total_tax - withheld_tax
 
                 # Debug information
                 st.write(f"""
@@ -72,7 +104,8 @@ class DeliveryServiceProcessor:
                 - Period: {order_period}
                 - Subtotal: ${subtotal:.2f}
                 - Fees: ${fees:.2f}
-                - Tax: ${tax:.2f}
+                - Collected Tax: ${collected_tax:.2f}
+                - Withheld Tax: ${withheld_tax:.2f}
                 - Net Deposit: ${net_deposit:.2f}
                 """)
 
@@ -81,8 +114,9 @@ class DeliveryServiceProcessor:
                     'distribution_id': distribution_id,
                     'order_period': order_period,
                     'subtotal': subtotal,
-                    'tax': tax,
+                    'tax': total_tax,
                     'fees': fees,
+                    'withheld_tax': withheld_tax,
                     'net_deposit': net_deposit
                 })
 
@@ -183,16 +217,19 @@ def main():
                     total_sales = sum(d['subtotal'] for d in deposits)
                     total_fees = sum(d['fees'] for d in deposits)
                     total_tax = sum(d['tax'] for d in deposits)
+                    total_withheld_tax = sum(d['withheld_tax'] for d in deposits)
                     total_deposits = sum(d['net_deposit'] for d in deposits)
                     
-                    col1, col2, col3, col4 = st.columns(4)
+                    col1, col2, col3, col4, col5 = st.columns(5)
                     with col1:
                         st.metric("Total Sales", f"${total_sales:.2f}")
                     with col2:
                         st.metric("Total Fees", f"${total_fees:.2f}")
                     with col3:
-                        st.metric("Total Tax", f"${total_tax:.2f}")
+                        st.metric("Collected Tax", f"${total_tax:.2f}")
                     with col4:
+                        st.metric("Withheld Tax", f"${total_withheld_tax:.2f}")
+                    with col5:
                         st.metric("Net Deposits", f"${total_deposits:.2f}")
                     
                     # Display journal entries
