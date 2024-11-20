@@ -14,52 +14,56 @@ def parse_deposit_section(text):
         net_match = re.search(r'Pay me\s+now fee\s+\$([\d.]+)', text)
         net_deposit = float(net_match.group(1)) if net_match else 0
         
-        # Extract specific fees
+        # Initialize fee variables
         marketing_fees = 0
         delivery_fees = 0
         processing_fees = 0
         collected_tax = 0
         withheld_tax = 0
         
-        # Look for each fee type - using raw strings (r'') for regex patterns
-        fee_lines = text.split('\n')
-        for line in fee_lines:
+        # Find all lines with dollar amounts
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            
+            # Look for amounts in parentheses
             if 'Marketing' in line:
-                match = re.search(r'\((\d+\.\d+)\)', line)
-                if match:
-                    marketing_fees += float(match.group(1))
+                amounts = re.findall(r'\(\$([\d.]+)\)', line)
+                marketing_fees += sum(float(amt) for amt in amounts)
+                
             elif 'Deliveries by Grubhub' in line:
-                match = re.search(r'\((\d+\.\d+)\)', line)
-                if match:
-                    delivery_fees += float(match.group(1))
+                amounts = re.findall(r'\(\$([\d.]+)\)', line)
+                delivery_fees += sum(float(amt) for amt in amounts)
+                
             elif 'Processing' in line:
-                match = re.search(r'\((\d+\.\d+)\)', line)
-                if match:
-                    processing_fees += float(match.group(1))
+                amounts = re.findall(r'\(\$([\d.]+)\)', line)
+                processing_fees += sum(float(amt) for amt in amounts)
+                
             elif 'Withheld sales tax' in line:
-                match = re.search(r'\((\d+\.\d+)\)', line)
-                if match:
-                    withheld_tax += float(match.group(1))
+                amounts = re.findall(r'\(\$([\d.]+)\)', line)
+                withheld_tax += sum(float(amt) for amt in amounts)
+                
             elif 'Sales tax' in line and 'Withheld' not in line:
-                match = re.search(r'\$(\d+\.\d+)(?!\s*\()', line)
-                if match:
-                    collected_tax += float(match.group(1))
+                amounts = re.findall(r'\$([\d.]+)(?!\s*\()', line)
+                collected_tax += sum(float(amt) for amt in amounts)
         
         # Get date
         date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', text)
         date = datetime.strptime(date_match.group(1), '%m/%d/%Y') if date_match else None
         
-        # Calculate total fees (excluding taxes)
+        # Calculate total fees
         total_fees = marketing_fees + delivery_fees + processing_fees
         
-        # Debug print
+        # Print raw text for debugging
+        st.write("Raw section text (first 200 chars):", text[:200])
         st.write(f"""
-        Debug info for section:
-        - Marketing: ${marketing_fees}
-        - Delivery: ${delivery_fees}
-        - Processing: ${processing_fees}
-        - Collected Tax: ${collected_tax}
-        - Withheld Tax: ${withheld_tax}
+        Parsed amounts for section:
+        Marketing: ${marketing_fees:.2f}
+        Delivery: ${delivery_fees:.2f}
+        Processing: ${processing_fees:.2f}
+        Collected Tax: ${collected_tax:.2f}
+        Withheld Tax: ${withheld_tax:.2f}
+        Net Deposit: ${net_deposit:.2f}
         """)
         
         return {
@@ -74,17 +78,21 @@ def parse_deposit_section(text):
             'net_deposit': net_deposit
         }
     except Exception as e:
-        st.error(f"Error parsing section: {str(e)}")
+        st.error(f"Error parsing section: {str(e)}\nText causing error: {text[:200]}")
         return None
 
 def process_statement(text):
-    # Split into sections by "Distribution ID" or "Deposit"
+    """Process the entire statement"""
+    # Replace any multiple newlines with single newlines and normalize spaces
+    text = re.sub(r'\n+', '\n', text.strip())
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Split into sections by deposit dates
     sections = re.split(r'(?=Deposit \d{1,2}/\d{1,2}/\d{4})', text)
     
     deposits = []
     for section in sections:
         if 'Total collected' in section:
-            st.write("Processing section:", section[:100] + "...")  # Debug print
             result = parse_deposit_section(section)
             if result:
                 deposits.append(result)
@@ -98,8 +106,9 @@ def main():
     
     if st.button('Process Statement'):
         if statement_text:
-            # Debug print
-            st.write("Found text length:", len(statement_text))
+            # Show raw input for debugging
+            st.write("Input text length:", len(statement_text))
+            st.write("First 200 characters of input:", statement_text[:200])
             
             deposits = process_statement(statement_text)
             
@@ -147,15 +156,6 @@ def main():
                         st.write(f"- Collected Tax: ${deposit['collected_tax']:.2f}")
                         st.write(f"- Withheld Tax: ${deposit['withheld_tax']:.2f}")
                         st.write(f"Net Deposit: ${deposit['net_deposit']:.2f}")
-                
-                # Verify the math
-                st.write("### Verification")
-                expected_net = total_sales - total_fees - total_collected_tax - total_withheld_tax
-                actual_net = total_deposits
-                if abs(expected_net - actual_net) < 0.01:
-                    st.success("✅ Numbers balance!")
-                else:
-                    st.warning(f"⚠️ Discrepancy found: Expected ${expected_net:.2f}, Got ${actual_net:.2f}")
-                
+
 if __name__ == "__main__":
     main()
