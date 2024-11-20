@@ -3,81 +3,48 @@ import pandas as pd
 from datetime import datetime
 import re
 
-def parse_amount(text):
-    """Extract amount from text, handling both positive and negative (parentheses) numbers"""
-    if '(' in text and ')' in text:
-        # Handle negative numbers in parentheses
-        amount = float(re.search(r'\(([\d.]+)\)', text).group(1)) * -1
-    else:
-        # Handle positive numbers
-        amount = float(re.search(r'([\d.]+)', text).group(1))
-    return amount
-
-def parse_line_items(text):
-    """Parse individual line items for fees and taxes"""
-    items = {}
-    for line in text.split('\n'):
-        if 'Marketing' in line and '$' in line:
-            items['marketing'] = abs(parse_amount(line))
-        elif 'Deliveries by Grubhub' in line and '$' in line:
-            items['delivery'] = abs(parse_amount(line))
-        elif 'Processing' in line and '$' in line:
-            items['processing'] = abs(parse_amount(line))
-        elif 'sales tax' in line.lower() and '$' in line and 'Withheld' not in line:
-            items['tax'] = abs(parse_amount(line))
-    return items
+def parse_deposit_section(text):
+    """Parse a single deposit section"""
+    try:
+        # Get the total collected amount
+        total_match = re.search(r'Total collected\s+\$([\d.]+)', text)
+        subtotal = float(total_match.group(1)) if total_match else 0
+        
+        # Get the net deposit (Pay me now fee amount)
+        net_match = re.search(r'Pay me\s+now fee\s+\$([\d.]+)', text)
+        net_deposit = float(net_match.group(1)) if net_match else 0
+        
+        # Extract all fees (amounts in parentheses)
+        fees = 0
+        fee_matches = re.finditer(r'\(\$([\d.]+)\)', text)
+        for match in fee_matches:
+            fees += float(match.group(1))
+        
+        # Get date
+        date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', text)
+        date = datetime.strptime(date_match.group(1), '%m/%d/%Y') if date_match else None
+        
+        return {
+            'date': date,
+            'subtotal': subtotal,
+            'fees': fees,
+            'net_deposit': net_deposit
+        }
+    except Exception as e:
+        st.error(f"Error parsing section: {str(e)}")
+        return None
 
 def process_statement(text):
+    # Split into sections by "Distribution ID" or "Deposit"
+    sections = re.split(r'(?=Deposit \d{1,2}/\d{1,2}/\d{4})', text)
+    
     deposits = []
+    for section in sections:
+        if 'Total collected' in section:
+            result = parse_deposit_section(section)
+            if result:
+                deposits.append(result)
     
-    # Split into sections by "Total collected"
-    sections = text.split('Total collected')
-    
-    for section in sections[1:]:
-        try:
-            # Get date
-            date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', section)
-            if not date_match:
-                continue
-            date = datetime.strptime(date_match.group(1), '%m/%d/%Y')
-            
-            # Get distribution ID
-            dist_id = re.search(r'(\d{8}JV-UBOK)', section).group(1)
-            
-            # Get order period
-            period = re.search(r'Orders (\d{1,2}/\d{1,2} to \d{1,2}/\d{1,2})', section).group(1)
-            
-            # Parse line items
-            items = parse_line_items(section)
-            
-            # Get total collected amount
-            total_match = re.search(r'\$([\d.]+)', section)
-            total = float(total_match.group(1)) if total_match else 0
-            
-            # Get net deposit
-            net_match = re.search(r'Pay me\s+now fee\s+\$([\d.]+)', section)
-            net = float(net_match.group(1)) if net_match else 0
-            
-            # Calculate total fees
-            fees = sum([
-                items.get('marketing', 0),
-                items.get('delivery', 0),
-                items.get('processing', 0)
-            ])
-            
-            deposits.append({
-                'date': date,
-                'distribution_id': dist_id,
-                'order_period': period,
-                'subtotal': total,
-                'fees': fees,
-                'tax': items.get('tax', 0),
-                'net_deposit': net
-            })
-            
-        except Exception as e:
-            st.error(f"Error processing section: {str(e)}")
-            
     return deposits
 
 def main():
@@ -90,27 +57,38 @@ def main():
             deposits = process_statement(statement_text)
             
             if deposits:
-                totals = {
-                    'sales': sum(d['subtotal'] for d in deposits),
-                    'fees': sum(d['fees'] for d in deposits),
-                    'tax': sum(d['tax'] for d in deposits),
-                    'net': sum(d['net_deposit'] for d in deposits)
-                }
+                # Calculate totals
+                total_sales = sum(d['subtotal'] for d in deposits)
+                total_fees = sum(d['fees'] for d in deposits)
+                total_deposits = sum(d['net_deposit'] for d in deposits)
                 
-                cols = st.columns(4)
-                cols[0].metric("Total Sales", f"${totals['sales']:.2f}")
-                cols[1].metric("Total Fees", f"${totals['fees']:.2f}")
-                cols[2].metric("Total Tax", f"${totals['tax']:.2f}")
-                cols[3].metric("Net Deposits", f"${totals['net']:.2f}")
+                # Display totals
+                cols = st.columns(3)
+                cols[0].metric("Total Sales", f"${total_sales:.2f}")
+                cols[1].metric("Total Fees", f"${total_fees:.2f}")
+                cols[2].metric("Net Deposits", f"${total_deposits:.2f}")
                 
-                st.write("### Journal Entries")
+                # Display individual entries
+                st.write("### Deposits")
                 for deposit in deposits:
-                    with st.expander(f"Entry for {deposit['date'].strftime('%m/%d/%Y')}"):
-                        st.write(f"Date: {deposit['date'].strftime('%m/%d/%Y')}")
-                        st.write(f"Net Amount: ${deposit['net_deposit']:.2f}")
-                        st.write(f"Fees: ${deposit['fees']:.2f}")
+                    if deposit['date']:
+                        date_str = deposit['date'].strftime('%m/%d/%Y')
+                    else:
+                        date_str = "Unknown Date"
+                        
+                    with st.expander(f"Deposit for {date_str}"):
                         st.write(f"Sales: ${deposit['subtotal']:.2f}")
-                        st.write(f"Tax: ${deposit['tax']:.2f}")
-
+                        st.write(f"Fees: ${deposit['fees']:.2f}")
+                        st.write(f"Net Deposit: ${deposit['net_deposit']:.2f}")
+                
+                # Verify the math
+                st.write("### Verification")
+                expected_net = total_sales - total_fees
+                actual_net = total_deposits
+                if abs(expected_net - actual_net) < 0.01:
+                    st.success("✅ Numbers balance!")
+                else:
+                    st.warning(f"⚠️ Discrepancy found: Expected ${expected_net:.2f}, Got ${actual_net:.2f}")
+                
 if __name__ == "__main__":
     main()
