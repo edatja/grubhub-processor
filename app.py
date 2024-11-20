@@ -21,27 +21,27 @@ def parse_deposit_section(text):
         collected_tax = 0
         withheld_tax = 0
         
-        # Look for each fee type
+        # Look for each fee type - using raw strings (r'') for regex patterns
         fee_lines = text.split('\n')
         for line in fee_lines:
-            if 'Marketing' in line and '\$' in line:
-                match = re.search(r'\(\$([\d.]+)\)', line)
+            if 'Marketing' in line:
+                match = re.search(r'\((\d+\.\d+)\)', line)
                 if match:
                     marketing_fees += float(match.group(1))
-            elif 'Deliveries by Grubhub' in line and '\$' in line:
-                match = re.search(r'\(\$([\d.]+)\)', line)
+            elif 'Deliveries by Grubhub' in line:
+                match = re.search(r'\((\d+\.\d+)\)', line)
                 if match:
                     delivery_fees += float(match.group(1))
-            elif 'Processing' in line and '\$' in line:
-                match = re.search(r'\(\$([\d.]+)\)', line)
+            elif 'Processing' in line:
+                match = re.search(r'\((\d+\.\d+)\)', line)
                 if match:
                     processing_fees += float(match.group(1))
             elif 'Withheld sales tax' in line:
-                match = re.search(r'\(\$([\d.]+)\)', line)
+                match = re.search(r'\((\d+\.\d+)\)', line)
                 if match:
                     withheld_tax += float(match.group(1))
             elif 'Sales tax' in line and 'Withheld' not in line:
-                match = re.search(r'\$([\d.]+)(?!\s*\()', line)
+                match = re.search(r'\$(\d+\.\d+)(?!\s*\()', line)
                 if match:
                     collected_tax += float(match.group(1))
         
@@ -51,6 +51,16 @@ def parse_deposit_section(text):
         
         # Calculate total fees (excluding taxes)
         total_fees = marketing_fees + delivery_fees + processing_fees
+        
+        # Debug print
+        st.write(f"""
+        Debug info for section:
+        - Marketing: ${marketing_fees}
+        - Delivery: ${delivery_fees}
+        - Processing: ${processing_fees}
+        - Collected Tax: ${collected_tax}
+        - Withheld Tax: ${withheld_tax}
+        """)
         
         return {
             'date': date,
@@ -74,6 +84,7 @@ def process_statement(text):
     deposits = []
     for section in sections:
         if 'Total collected' in section:
+            st.write("Processing section:", section[:100] + "...")  # Debug print
             result = parse_deposit_section(section)
             if result:
                 deposits.append(result)
@@ -87,6 +98,9 @@ def main():
     
     if st.button('Process Statement'):
         if statement_text:
+            # Debug print
+            st.write("Found text length:", len(statement_text))
+            
             deposits = process_statement(statement_text)
             
             if deposits:
