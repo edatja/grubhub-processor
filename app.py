@@ -3,202 +3,114 @@ import pandas as pd
 from datetime import datetime
 import re
 
-st.set_page_config(page_title="Food Delivery Statement Processor", page_icon="🧾", layout="wide")
+def parse_amount(text):
+    """Extract amount from text, handling both positive and negative (parentheses) numbers"""
+    if '(' in text and ')' in text:
+        # Handle negative numbers in parentheses
+        amount = float(re.search(r'\(([\d.]+)\)', text).group(1)) * -1
+    else:
+        # Handle positive numbers
+        amount = float(re.search(r'([\d.]+)', text).group(1))
+    return amount
 
-class DeliveryServiceProcessor:
-    def __init__(self):
-        self.accounts = {
-            'sales': '44030',                # Grubhub Sales
-            'fees': '60260',                 # Grubhub Fees
-            'tax': 'Sales Tax Payable',      # Sales Tax Payable
-            'bank': 'Checking - 5734 - 1'    # Bank Account
-        }
+def parse_line_items(text):
+    """Parse individual line items for fees and taxes"""
+    items = {}
+    for line in text.split('\n'):
+        if 'Marketing' in line and '$' in line:
+            items['marketing'] = abs(parse_amount(line))
+        elif 'Deliveries by Grubhub' in line and '$' in line:
+            items['delivery'] = abs(parse_amount(line))
+        elif 'Processing' in line and '$' in line:
+            items['processing'] = abs(parse_amount(line))
+        elif 'sales tax' in line.lower() and '$' in line and 'Withheld' not in line:
+            items['tax'] = abs(parse_amount(line))
+    return items
 
-    def parse_grubhub_statement(self, text):
-        deposits = []
-        
-        # Split into sections by Distribution ID
-        sections = text.split('Distribution ID')
-        
-        for section in sections[1:]:  # Skip header section
-            try:
-                # Basic extractions first
-                date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', section)
-                if not date_match:
-                    continue
-                
-                date = datetime.strptime(date_match.group(1), '%m/%d/%Y')
-                
-                # Get Distribution ID
-                dist_id_match = re.search(r'(\d{8}JV-UBOK)', section)
-                distribution_id = dist_id_match.group(1) if dist_id_match else ''
-                
-                # Get order period
-                period_match = re.search(r'Orders (\d{1,2}/\d{1,2})(?:\sto\s)(\d{1,2}/\d{1,2})', section)
-                order_period = f"{period_match.group(1)} to {period_match.group(2)}" if period_match else ""
-                
-                # Get total collected (subtotal)
-                total_match = re.search(r'Total collected\s+\$([\d.]+)', section)
-                subtotal = float(total_match.group(1)) if total_match else 0
-                
-                # Get net deposit
-                net_match = re.search(r'Pay me\s+now fee\s+\$([\d.]+)', section)
-                net_deposit = float(net_match.group(1)) if net_match else 0
-                
-                # Calculate total fees - sum all parenthetical amounts after "Total collected" but before "Pay me"
-                fees_section = re.search(r'Total collected.*?Pay me', section, re.DOTALL)
-                fees = 0
-                if fees_section:
-                    fee_matches = re.finditer(r'\(([\d.]+)\)', fees_section.group(0))
-                    fees = sum(float(m.group(1)) for m in fee_matches)
-                
-                # Get collected tax
-                tax_matches = re.finditer(r'Sales\s+tax\s+\$([\d.]+)(?!\s*\()', section)
-                collected_tax = sum(float(match.group(1)) for match in tax_matches)
-                
-                deposits.append({
-                    'date': date,
-                    'distribution_id': distribution_id,
-                    'order_period': order_period,
-                    'subtotal': subtotal,
-                    'tax': collected_tax,
-                    'fees': fees,
-                    'net_deposit': net_deposit
-                })
-                
-            except Exception as e:
-                st.error(f"Error processing section: {str(e)}")
+def process_statement(text):
+    deposits = []
+    
+    # Split into sections by "Total collected"
+    sections = text.split('Total collected')
+    
+    for section in sections[1:]:
+        try:
+            # Get date
+            date_match = re.search(r'Deposit (\d{1,2}/\d{1,2}/\d{4})', section)
+            if not date_match:
                 continue
-                
-        return deposits
-
-    def create_journal_entries(self, deposits):
-        journal_entries = []
-        
-        for deposit in deposits:
-            entry = {
-                'date': deposit['date'].strftime('%m/%d/%Y'),
-                'memo': f'GrubHub Deposit {deposit["distribution_id"]} - Orders {deposit["order_period"]}',
-                'lines': [
-                    {
-                        'account': self.accounts['bank'],
-                        'debit': round(deposit['net_deposit'], 2),
-                        'credit': 0,
-                        'description': 'Net GrubHub Deposit'
-                    },
-                    {
-                        'account': self.accounts['fees'],
-                        'debit': round(deposit['fees'], 2),
-                        'credit': 0,
-                        'description': 'GrubHub Fees'
-                    },
-                    {
-                        'account': self.accounts['sales'],
-                        'debit': 0,
-                        'credit': round(deposit['subtotal'], 2),
-                        'description': 'Food Sales'
-                    },
-                    {
-                        'account': self.accounts['tax'],
-                        'debit': 0,
-                        'credit': round(deposit['tax'], 2),
-                        'description': 'Sales Tax Collected'
-                    }
-                ]
-            }
-            journal_entries.append(entry)
+            date = datetime.strptime(date_match.group(1), '%m/%d/%Y')
             
-        return journal_entries
+            # Get distribution ID
+            dist_id = re.search(r'(\d{8}JV-UBOK)', section).group(1)
+            
+            # Get order period
+            period = re.search(r'Orders (\d{1,2}/\d{1,2} to \d{1,2}/\d{1,2})', section).group(1)
+            
+            # Parse line items
+            items = parse_line_items(section)
+            
+            # Get total collected amount
+            total_match = re.search(r'\$([\d.]+)', section)
+            total = float(total_match.group(1)) if total_match else 0
+            
+            # Get net deposit
+            net_match = re.search(r'Pay me\s+now fee\s+\$([\d.]+)', section)
+            net = float(net_match.group(1)) if net_match else 0
+            
+            # Calculate total fees
+            fees = sum([
+                items.get('marketing', 0),
+                items.get('delivery', 0),
+                items.get('processing', 0)
+            ])
+            
+            deposits.append({
+                'date': date,
+                'distribution_id': dist_id,
+                'order_period': period,
+                'subtotal': total,
+                'fees': fees,
+                'tax': items.get('tax', 0),
+                'net_deposit': net
+            })
+            
+        except Exception as e:
+            st.error(f"Error processing section: {str(e)}")
+            
+    return deposits
 
 def main():
     st.title('🧾 Food Delivery Statement Processor')
     
-    st.markdown("""
-    ### Convert GrubHub statements into QuickBooks journal entries
+    statement_text = st.text_area("Paste your GrubHub statement here:", height=300)
     
-    **Instructions:**
-    1. Paste your GrubHub statement text below
-    2. Click 'Process Statement'
-    3. Review the entries
-    4. Download the CSV file
-    """)
-
-    statement_text = st.text_area(
-        "Paste your GrubHub statement here:",
-        height=300,
-        help="Copy and paste your entire GrubHub statement, including all deposit details"
-    )
-
-    if st.button('Process Statement', type='primary'):
+    if st.button('Process Statement'):
         if statement_text:
-            processor = DeliveryServiceProcessor()
+            deposits = process_statement(statement_text)
             
-            # Process statement
-            with st.spinner('Processing statement...'):
-                deposits = processor.parse_grubhub_statement(statement_text)
-                
             if deposits:
-                # Create journal entries
-                entries = processor.create_journal_entries(deposits)
+                totals = {
+                    'sales': sum(d['subtotal'] for d in deposits),
+                    'fees': sum(d['fees'] for d in deposits),
+                    'tax': sum(d['tax'] for d in deposits),
+                    'net': sum(d['net_deposit'] for d in deposits)
+                }
                 
-                # Display entries
-                st.success(f"Found {len(deposits)} deposits!")
+                cols = st.columns(4)
+                cols[0].metric("Total Sales", f"${totals['sales']:.2f}")
+                cols[1].metric("Total Fees", f"${totals['fees']:.2f}")
+                cols[2].metric("Total Tax", f"${totals['tax']:.2f}")
+                cols[3].metric("Net Deposits", f"${totals['net']:.2f}")
                 
-                # Show summary
-                total_sales = sum(d['subtotal'] for d in deposits)
-                total_fees = sum(d['fees'] for d in deposits)
-                total_tax = sum(d['tax'] for d in deposits)
-                total_deposits = sum(d['net_deposit'] for d in deposits)
-                
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Total Sales", f"${total_sales:.2f}")
-                with col2:
-                    st.metric("Total Fees", f"${total_fees:.2f}")
-                with col3:
-                    st.metric("Total Tax", f"${total_tax:.2f}")
-                with col4:
-                    st.metric("Net Deposits", f"${total_deposits:.2f}")
-                
-                # Display journal entries
-                st.markdown("### Journal Entries Preview")
-                for entry in entries:
-                    with st.expander(f"Entry for {entry['date']} - ${entry['lines'][0]['debit']:.2f}"):
-                        st.write("Date:", entry['date'])
-                        st.write("Memo:", entry['memo'])
-                        st.markdown("```")
-                        for line in entry['lines']:
-                            if line['debit'] > 0:
-                                st.write(f"{line['account']} {' ' * (25-len(line['account']))} {line['debit']:.2f}")
-                            else:
-                                st.write(f"{line['account']} {' ' * (25-len(line['account']))} {' ' * 12} {line['credit']:.2f}")
-                        st.markdown("```")
-                
-                # Create CSV file
-                csv_data = []
-                for entry in entries:
-                    for line in entry['lines']:
-                        csv_data.append({
-                            'Date': entry['date'],
-                            'Journal No.': '',
-                            'Memo': entry['memo'],
-                            'Account': line['account'],
-                            'Debit': f"{line['debit']:.2f}" if line['debit'] > 0 else '',
-                            'Credit': f"{line['credit']:.2f}" if line['credit'] > 0 else '',
-                            'Description': line['description']
-                        })
-                
-                df = pd.DataFrame(csv_data)
-                csv = df.to_csv(index=False)
-                
-                st.download_button(
-                    label="📥 Download QuickBooks CSV",
-                    data=csv,
-                    file_name="grubhub_journal_entries.csv",
-                    mime="text/csv",
-                )
-        else:
-            st.warning("Please paste a GrubHub statement first.")
+                st.write("### Journal Entries")
+                for deposit in deposits:
+                    with st.expander(f"Entry for {deposit['date'].strftime('%m/%d/%Y')}"):
+                        st.write(f"Date: {deposit['date'].strftime('%m/%d/%Y')}")
+                        st.write(f"Net Amount: ${deposit['net_deposit']:.2f}")
+                        st.write(f"Fees: ${deposit['fees']:.2f}")
+                        st.write(f"Sales: ${deposit['subtotal']:.2f}")
+                        st.write(f"Tax: ${deposit['tax']:.2f}")
 
 if __name__ == "__main__":
     main()
